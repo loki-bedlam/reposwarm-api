@@ -25,6 +25,7 @@ export function createApp() {
 
   // All API routes under /v1 with auth
   const v1 = express.Router()
+  v1.use(healthRouter) // health before auth
   v1.use(authMiddleware)
   v1.use(reposRouter)
   v1.use(workflowsRouter)
