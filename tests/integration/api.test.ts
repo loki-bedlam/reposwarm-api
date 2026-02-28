@@ -363,6 +363,19 @@ describe('GET /prompts', () => {
     const res = await request.get('/prompts?type=backend').set(AUTH)
     expect(res.body.data).toHaveLength(2) // shared + backend
   })
+
+  it('filters by enabled', async () => {
+    mockSend.mockResolvedValueOnce({
+      Items: [
+        { repository_name: '_prompt_active', analysis_timestamp: 0, content: 'c', order_num: 1, prompt_type: 'shared', version: 1, enabled: true },
+        { repository_name: '_prompt_inactive', analysis_timestamp: 0, content: 'c', order_num: 2, prompt_type: 'shared', version: 1, enabled: false }
+      ],
+      LastEvaluatedKey: undefined
+    })
+    const res = await request.get('/prompts?enabled=true').set(AUTH)
+    expect(res.body.data).toHaveLength(1)
+    expect(res.body.data[0].name).toBe('active')
+  })
 })
 
 describe('POST /prompts', () => {
@@ -424,10 +437,20 @@ describe('PUT /prompts/:name', () => {
     expect(res.body.data.content).toBe('new content')
   })
 
-  it('rejects missing content', async () => {
-    mockSend.mockResolvedValueOnce({ Item: { repository_name: '_prompt_test', analysis_timestamp: 0, version: 1 } })
+  it('rejects empty update', async () => {
+    mockSend.mockResolvedValueOnce({ Item: { repository_name: '_prompt_test', analysis_timestamp: 0, content: 'old', description: 'd', order_num: 1, enabled: true, prompt_type: 'shared', version: 1 } })
     const res = await request.put('/prompts/test').set(AUTH).send({})
     expect(res.status).toBe(400)
+  })
+
+  it('updates metadata without creating new version', async () => {
+    mockSend
+      .mockResolvedValueOnce({ Item: { repository_name: '_prompt_test', analysis_timestamp: 0, content: 'old', description: 'd', order_num: 1, enabled: true, prompt_type: 'shared', version: 2 } })
+      .mockResolvedValueOnce({}) // putPrompt
+    const res = await request.put('/prompts/test').set(AUTH).send({ description: 'new desc' })
+    expect(res.status).toBe(200)
+    expect(res.body.data.description).toBe('new desc')
+    expect(res.body.data.version).toBe(2) // version unchanged
   })
 })
 
@@ -536,6 +559,20 @@ describe('POST /prompts/:name/rollback', () => {
       .mockResolvedValueOnce({ Item: undefined })
     const res = await request.post('/prompts/test/rollback').set(AUTH).send({ toVersion: 99 })
     expect(res.status).toBe(404)
+  })
+})
+
+describe('PUT /prompts/:name/rollback', () => {
+  it('rolls back via PUT', async () => {
+    mockSend
+      .mockResolvedValueOnce({ Item: { repository_name: '_prompt_test', analysis_timestamp: 0, content: 'v3', order_num: 1, enabled: true, prompt_type: 'shared', version: 3 } })
+      .mockResolvedValueOnce({ Item: { repository_name: '_prompt_test', analysis_timestamp: 1, content: 'v1 content', created_by: 'api' } })
+      .mockResolvedValueOnce({}) // putPrompt
+      .mockResolvedValueOnce({}) // putPromptVersion
+    const res = await request.put('/prompts/test/rollback').set(AUTH).send({ toVersion: 1 })
+    expect(res.status).toBe(200)
+    expect(res.body.data.version).toBe(4)
+    expect(res.body.data.content).toBe('v1 content')
   })
 })
 
