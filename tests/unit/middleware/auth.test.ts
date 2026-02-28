@@ -17,8 +17,8 @@ vi.mock('aws-jwt-verify', () => ({
 
 import { authMiddleware, resetVerifier } from '../../../src/middleware/auth.js'
 
-function mockReqRes(authHeader?: string) {
-  const req = { headers: { authorization: authHeader } } as any as Request
+function mockReqRes(opts: { auth?: string; cookie?: string } = {}) {
+  const req = { headers: { authorization: opts.auth, cookie: opts.cookie } } as any as Request
   const res = { status: vi.fn().mockReturnThis(), json: vi.fn() } as any as Response
   const next = vi.fn() as NextFunction
   return { req, res, next }
@@ -39,14 +39,14 @@ describe('authMiddleware', () => {
   })
 
   it('rejects non-Bearer auth', async () => {
-    const { req, res, next } = mockReqRes('Basic abc123')
+    const { req, res, next } = mockReqRes({ auth: 'Basic abc123' })
     await authMiddleware(req, res, next)
     expect(res.status).toHaveBeenCalledWith(401)
   })
 
   it('accepts valid Cognito JWT', async () => {
     mockVerify.mockResolvedValueOnce({ sub: 'user-123', email: 'test@test.com' })
-    const { req, res, next } = mockReqRes('Bearer valid-jwt')
+    const { req, res, next } = mockReqRes({ auth: 'Bearer valid-jwt' })
     await authMiddleware(req, res, next)
     expect(next).toHaveBeenCalled()
     expect(req.user).toEqual({ sub: 'user-123', email: 'test@test.com', type: 'cognito' })
@@ -54,7 +54,7 @@ describe('authMiddleware', () => {
 
   it('falls back to bearer token when JWT fails', async () => {
     mockVerify.mockRejectedValueOnce(new Error('bad jwt'))
-    const { req, res, next } = mockReqRes('Bearer test-token-xyz')
+    const { req, res, next } = mockReqRes({ auth: 'Bearer test-token-xyz' })
     await authMiddleware(req, res, next)
     expect(next).toHaveBeenCalled()
     expect(req.user).toEqual({ sub: 'api-token', type: 'm2m' })
@@ -62,14 +62,38 @@ describe('authMiddleware', () => {
 
   it('rejects invalid token', async () => {
     mockVerify.mockRejectedValueOnce(new Error('bad'))
-    const { req, res, next } = mockReqRes('Bearer wrong-token')
+    const { req, res, next } = mockReqRes({ auth: 'Bearer wrong-token' })
     await authMiddleware(req, res, next)
     expect(res.status).toHaveBeenCalledWith(401)
     expect(next).not.toHaveBeenCalled()
   })
 
   it('rejects empty bearer token', async () => {
-    const { req, res, next } = mockReqRes('Bearer ')
+    const { req, res, next } = mockReqRes({ auth: 'Bearer ' })
+    await authMiddleware(req, res, next)
+    expect(res.status).toHaveBeenCalledWith(401)
+  })
+
+  // Cookie auth tests
+  it('accepts Cognito JWT from HttpOnly cookie', async () => {
+    mockVerify.mockResolvedValueOnce({ sub: 'cookie-user', email: 'cookie@test.com' })
+    const { req, res, next } = mockReqRes({ cookie: 'reposwarm-ui-auth=valid-jwt-from-cookie; other=val' })
+    await authMiddleware(req, res, next)
+    expect(next).toHaveBeenCalled()
+    expect(req.user).toEqual({ sub: 'cookie-user', email: 'cookie@test.com', type: 'cognito' })
+  })
+
+  it('prefers Authorization header over cookie', async () => {
+    mockVerify.mockRejectedValue(new Error('bad'))
+    const { req, res, next } = mockReqRes({ auth: 'Bearer test-token-xyz', cookie: 'reposwarm-ui-auth=some-jwt' })
+    await authMiddleware(req, res, next)
+    expect(next).toHaveBeenCalled()
+    expect(req.user).toEqual({ sub: 'api-token', type: 'm2m' })
+  })
+
+  it('rejects when cookie has invalid JWT', async () => {
+    mockVerify.mockRejectedValueOnce(new Error('bad jwt'))
+    const { req, res, next } = mockReqRes({ cookie: 'reposwarm-ui-auth=bad-jwt' })
     await authMiddleware(req, res, next)
     expect(res.status).toHaveBeenCalledWith(401)
   })

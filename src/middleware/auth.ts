@@ -20,16 +20,33 @@ function getBearerToken(): string {
   return process.env.API_BEARER_TOKEN || config.apiBearerToken || ''
 }
 
+function parseCookies(cookieHeader: string): Record<string, string> {
+  const cookies: Record<string, string> = {}
+  for (const part of cookieHeader.split(';')) {
+    const [k, ...v] = part.trim().split('=')
+    if (k) cookies[k] = v.join('=')
+  }
+  return cookies
+}
+
 export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
+  let token: string | null = null
+
+  // 1. Check Authorization header
   const authHeader = req.headers.authorization
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Missing or invalid Authorization header' })
-    return
+  if (authHeader?.startsWith('Bearer ')) {
+    token = authHeader.slice(7) || null
   }
 
-  const token = authHeader.slice(7)
+  // 2. Fallback: check HttpOnly cookie from Lambda@Edge auth
+  if (!token && req.headers.cookie) {
+    const cookies = parseCookies(req.headers.cookie)
+    const cookieName = process.env.AUTH_COOKIE_NAME || 'reposwarm-ui-auth'
+    token = cookies[cookieName] || null
+  }
+
   if (!token) {
-    res.status(401).json({ error: 'Empty token' })
+    res.status(401).json({ error: 'Missing or invalid Authorization header' })
     return
   }
 
