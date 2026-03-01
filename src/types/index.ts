@@ -79,6 +79,8 @@ export interface WikiRepoSummary {
 }
 
 export interface WikiSection {
+  id: string
+  label: string
   stepName: string
   createdAt: string
   hasContent: boolean

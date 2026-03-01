@@ -138,6 +138,17 @@ export async function listWikiRepos(knownRepos?: string[]): Promise<WikiRepoSumm
     .sort((a, b) => b.lastUpdated.localeCompare(a.lastUpdated))
 }
 
+const SECTION_LABELS: Record<string, string> = {
+  hl_overview: 'Overview', core_entities: 'Core Entities', APIs: 'APIs',
+  api_surface: 'API Surface', internals: 'Internals', module_deep_dive: 'Module Deep Dive',
+  data_mapping: 'Data Mapping', DBs: 'Databases', authentication: 'Authentication',
+  authorization: 'Authorization', security_check: 'Security',
+  prompt_security_check: 'Prompt Security', dependencies: 'Dependencies',
+  service_dependencies: 'Service Dependencies', deployment: 'Deployment',
+  monitoring: 'Monitoring', events: 'Events', feature_flags: 'Feature Flags',
+  ml_services: 'ML Services'
+}
+
 export async function listWikiSections(repo: string): Promise<WikiSection[]> {
   const items = await paginatedScan({
     TableName: TABLE,
@@ -145,11 +156,16 @@ export async function listWikiSections(repo: string): Promise<WikiSection[]> {
     ExpressionAttributeValues: { ':prefix': `_result_${repo}_` },
     ProjectionExpression: 'repository_name, analysis_timestamp, step_name, created_at'
   })
-  return items.map(i => ({
-    stepName: i.step_name || '',
-    createdAt: i.created_at || '',
-    hasContent: true
-  }))
+  return items.map(i => {
+    const stepName = i.step_name || ''
+    return {
+      id: stepName,
+      stepName,
+      label: SECTION_LABELS[stepName] || stepName.replace(/_/g, ' '),
+      createdAt: i.created_at || '',
+      hasContent: true
+    }
+  })
 }
 
 export async function getWikiSection(repo: string, section: string): Promise<string | null> {
