@@ -50,3 +50,4 @@ npm start       # Production
 Send `Authorization: Bearer <token>` with either:
 - A valid Cognito JWT (from `us-east-1_XgaUUc0TG`)
 - The API bearer token (from `API_BEARER_TOKEN` env var)
+# Auto-trigger test 19:30
