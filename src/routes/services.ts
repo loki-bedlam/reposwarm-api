@@ -163,6 +163,133 @@ router.post('/services/:name/restart', async (req: Request, res: Response) => {
   }
 })
 
+// POST /services/:name/upgrade — git pull + npm install + npm build + restart
+router.post('/services/:name/upgrade', async (req: Request, res: Response) => {
+  const name = req.params.name as string
+  if (!['api', 'ui', 'worker'].includes(name)) {
+    return res.status(400).json({ error: `Cannot upgrade service: ${name}` })
+  }
+
+  const svcDir = join(INSTALL_DIR, name)
+  if (!existsSync(svcDir)) {
+    return res.status(404).json({ error: `Service directory not found: ${svcDir}` })
+  }
+
+  try {
+    // Get current version before upgrade
+    let oldVersion = ''
+    const pkgPath = join(svcDir, 'package.json')
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
+        oldVersion = pkg.version || ''
+      } catch { /* */ }
+    }
+
+    // Git pull
+    logger.info({ service: name }, 'Upgrading: git pull')
+    const pullOutput = execSync('git pull', { cwd: svcDir, encoding: 'utf-8', timeout: 30000 }).trim()
+    const alreadyUpToDate = pullOutput.includes('Already up to date') || pullOutput.includes('Already up-to-date')
+
+    if (alreadyUpToDate && !req.body?.force) {
+      return res.json({
+        data: {
+          oldVersion,
+          newVersion: oldVersion,
+          updated: false,
+          restarted: false,
+          message: 'Already up to date'
+        }
+      })
+    }
+
+    // npm install (if package.json exists)
+    if (existsSync(pkgPath)) {
+      logger.info({ service: name }, 'Upgrading: npm install')
+      execSync('npm install --production', { cwd: svcDir, timeout: 120000, stdio: 'pipe' })
+    }
+
+    // Build (if build script exists)
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
+        if (pkg.scripts?.build) {
+          logger.info({ service: name }, 'Upgrading: npm run build')
+          execSync('npm run build', { cwd: svcDir, timeout: 120000, stdio: 'pipe' })
+        }
+      } catch { /* */ }
+    }
+
+    // For python worker: pip install
+    const reqFile = join(svcDir, 'requirements.txt')
+    if (existsSync(reqFile)) {
+      logger.info({ service: name }, 'Upgrading: pip install')
+      execSync('pip3 install -r requirements.txt', { cwd: svcDir, timeout: 120000, stdio: 'pipe' })
+    }
+
+    // Get new version
+    let newVersion = ''
+    if (existsSync(pkgPath)) {
+      try {
+        // Re-read after pull
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
+        newVersion = pkg.version || ''
+      } catch { /* */ }
+    }
+
+    // Restart the service (skip for self if name is api — we'll handle that separately)
+    let restarted = false
+    if (name !== 'api') {
+      const pid = findPID(name)
+      if (pid > 0) {
+        try { process.kill(pid, 'SIGTERM') } catch { /* */ }
+        await new Promise(resolve => setTimeout(resolve, 2000))
+        if (isRunning(pid)) try { process.kill(pid, 'SIGKILL') } catch { /* */ }
+      }
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      const envVars = readEnvFile(join(svcDir, '.env'))
+      const env = { ...process.env, ...envVars }
+
+      switch (name) {
+        case 'worker': {
+          const child = spawn('python3', ['-m', 'src.worker'], { cwd: svcDir, env, detached: true, stdio: 'ignore' })
+          child.unref()
+          restarted = true
+          break
+        }
+        case 'ui': {
+          const child = spawn('npm', ['start'], { cwd: svcDir, env, detached: true, stdio: 'ignore' })
+          child.unref()
+          restarted = true
+          break
+        }
+      }
+    } else {
+      // For API: respond first, then restart self after a delay
+      restarted = true
+      setTimeout(() => {
+        logger.info('API self-restart after upgrade')
+        process.exit(0) // Let process manager (systemd/pm2) restart us
+      }, 1000)
+    }
+
+    logger.info({ service: name, oldVersion, newVersion }, 'Upgrade complete')
+    res.json({
+      data: {
+        oldVersion,
+        newVersion,
+        updated: true,
+        restarted,
+        message: `Upgraded ${name}${oldVersion && newVersion ? ` v${oldVersion} → v${newVersion}` : ''}`
+      }
+    })
+  } catch (err: any) {
+    logger.error({ service: name, error: err.message }, 'Upgrade failed')
+    res.status(500).json({ error: `Upgrade failed: ${err.message}` })
+  }
+})
+
 // POST /services/:name/stop
 router.post('/services/:name/stop', async (req: Request, res: Response) => {
   const name = req.params.name as string
