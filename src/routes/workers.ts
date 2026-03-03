@@ -41,9 +41,17 @@ interface ProviderBundle {
   pinVars?: Record<string, string>
 }
 
+interface GitProviderBundle {
+  label: string
+  envVars: EnvVarDef[]
+  authNote?: string
+  hint?: string
+}
+
 interface ProvidersFile {
   providers: Record<string, ProviderBundle>
   commonEnvVars: EnvVarDef[]
+  gitProviders: Record<string, GitProviderBundle>
   knownEnvVars: string[]
 }
 
@@ -67,6 +75,7 @@ function loadProvidersBundle(): ProvidersFile {
   return {
     providers: {},
     commonEnvVars: [],
+    gitProviders: {},
     knownEnvVars: ['ANTHROPIC_API_KEY', 'GITHUB_TOKEN', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_USE_BEDROCK', 'AWS_REGION']
   }
 }
@@ -292,6 +301,56 @@ function gatherWorkers(): WorkerInfo[] {
 router.get('/providers', async (_req: Request, res: Response) => {
   const bundle = getProvidersBundle()
   res.json({ data: bundle })
+})
+
+// GET /providers/validation — return exactly what env vars to validate for current config
+// The worker fetches this at startup to know what to check
+router.get('/providers/validation', async (req: Request, res: Response) => {
+  const bundle = getProvidersBundle()
+
+  // Read current config from query params or worker env
+  const provider = (req.query.provider as string) || process.env.PROVIDER || 'bedrock'
+  const authMethod = (req.query.authMethod as string) || process.env.BEDROCK_AUTH || ''
+  const gitProvider = (req.query.gitProvider as string) || process.env.GIT_PROVIDER || ''
+
+  const required: Array<{ key: string; desc: string; required: boolean; alts?: string[] }> = []
+
+  // Provider env vars
+  const providerBundle = bundle.providers?.[provider]
+  if (providerBundle?.envVars) {
+    if (providerBundle.envVars.always) {
+      required.push(...providerBundle.envVars.always)
+    }
+    if (providerBundle.envVars.authMethods) {
+      const auth = authMethod || providerBundle.envVars.defaultAuthMethod || ''
+      const am = providerBundle.envVars.authMethods[auth]
+      if (am?.envVars) {
+        required.push(...am.envVars)
+      }
+    }
+  }
+
+  // Git provider env vars
+  const gitBundle = bundle.gitProviders?.[gitProvider]
+  if (gitBundle?.envVars) {
+    required.push(...gitBundle.envVars)
+  }
+
+  // Common env vars
+  if (bundle.commonEnvVars) {
+    required.push(...bundle.commonEnvVars)
+  }
+
+  res.json({
+    data: {
+      provider,
+      authMethod,
+      gitProvider,
+      envVars: required,
+      gitHint: gitBundle?.hint || null,
+      gitAuthNote: gitBundle?.authNote || null,
+    }
+  })
 })
 
 // GET /workers
