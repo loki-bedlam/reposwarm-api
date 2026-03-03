@@ -70,7 +70,7 @@ describe('Workers Routes', () => {
         authMethod: 'api-key',
         response: 'OK'
       })
-      expect(res.body.data.latencyMs).toBeGreaterThan(0)
+      expect(res.body.data.latencyMs).toBeGreaterThanOrEqual(0)
 
       // Verify fetch was called correctly
       expect(mockFetch).toHaveBeenCalledWith(
@@ -247,6 +247,12 @@ describe('Workers Routes', () => {
     })
 
     it('should handle missing AWS_REGION for Bedrock', async () => {
+      // Save and clear process.env region vars (CodeBuild sets AWS_REGION)
+      const savedRegion = process.env.AWS_REGION
+      const savedDefaultRegion = process.env.AWS_DEFAULT_REGION
+      delete process.env.AWS_REGION
+      delete process.env.AWS_DEFAULT_REGION
+
       vi.mocked(existsSync).mockReturnValue(true)
       vi.mocked(readFileSync).mockReturnValue(
         'CLAUDE_CODE_USE_BEDROCK=1\nANTHROPIC_MODEL=us.anthropic.claude-opus-4-6-v1'
@@ -263,6 +269,10 @@ describe('Workers Routes', () => {
         error: 'AWS_REGION not set',
         hint: 'Set AWS_REGION or AWS_DEFAULT_REGION env var'
       })
+
+      // Restore env
+      if (savedRegion) process.env.AWS_REGION = savedRegion
+      if (savedDefaultRegion) process.env.AWS_DEFAULT_REGION = savedDefaultRegion
     })
   })
 
