@@ -6,15 +6,51 @@ import { execSync, spawn } from 'child_process'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
 import os from 'os'
+import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime'
 
 const router = Router()
 const INSTALL_DIR = process.env.REPOSWARM_INSTALL_DIR || join(os.homedir(), 'reposwarm')
 
-// Known required env vars for workers
-const REQUIRED_ENV_VARS = [
-  { key: 'ANTHROPIC_API_KEY', desc: 'required for LLM calls', alts: [] },
-  { key: 'GITHUB_TOKEN', desc: 'required for repo access', alts: ['GITHUB_PAT'] },
-]
+// Dynamic required env vars based on provider
+interface RequiredEnvVar {
+  key: string
+  desc: string
+  alts: string[]
+}
+
+function getRequiredEnvVars(envVars: Record<string, string>): RequiredEnvVar[] {
+  const isBedrock = envVars['CLAUDE_CODE_USE_BEDROCK'] === '1'
+  const isLiteLLM = !!envVars['ANTHROPIC_BASE_URL'] && !isBedrock
+
+  const common: RequiredEnvVar[] = [
+    { key: 'ANTHROPIC_MODEL', desc: 'Model ID for LLM calls', alts: ['CLAUDE_MODEL', 'MODEL_ID'] },
+    // Note: GITHUB_TOKEN is recommended but not strictly required for basic operation
+  ]
+
+  if (isBedrock) {
+    return [
+      ...common,
+      { key: 'CLAUDE_CODE_USE_BEDROCK', desc: 'Bedrock mode flag (must be 1)', alts: [] },
+      { key: 'AWS_REGION', desc: 'AWS region for Bedrock', alts: ['AWS_DEFAULT_REGION'] },
+      // AWS_ACCESS_KEY_ID only required if not using IAM role or profile
+      // We detect this: if neither KEY nor PROFILE is set, assume IAM role (which is fine)
+    ]
+  }
+
+  if (isLiteLLM) {
+    return [
+      ...common,
+      { key: 'ANTHROPIC_BASE_URL', desc: 'LiteLLM proxy URL', alts: [] },
+      // ANTHROPIC_API_KEY is optional for LiteLLM (proxy may not require auth)
+    ]
+  }
+
+  // Default: Anthropic direct
+  return [
+    ...common,
+    { key: 'ANTHROPIC_API_KEY', desc: 'Anthropic API key', alts: [] },
+  ]
+}
 
 const KNOWN_ENV_VARS = [
   'ANTHROPIC_API_KEY', 'GITHUB_TOKEN', 'GITHUB_PAT',
@@ -126,9 +162,10 @@ function gatherWorkers(): WorkerInfo[] {
   const envVars = readEnvFile(envPath)
   const hostname = os.hostname()
 
-  // Check env validation
+  // Check env validation using dynamic requirements
   const envErrors: string[] = []
-  for (const req of REQUIRED_ENV_VARS) {
+  const requiredEnvVars = getRequiredEnvVars(envVars)
+  for (const req of requiredEnvVars) {
     const found = envVars[req.key] || process.env[req.key] ||
       req.alts.some(alt => envVars[alt] || process.env[alt])
     if (!found) envErrors.push(req.key)
@@ -276,6 +313,238 @@ router.post('/workers/:id/restart', async (req: Request, res: Response) => {
     res.json({ data: { service: 'worker', status: 'restarted', pid: newPid } })
   } catch (err: any) {
     res.status(500).json({ error: `Failed to start worker: ${err.message}` })
+  }
+})
+
+// POST /workers/:id/inference-check
+router.post('/workers/:id/inference-check', async (req: Request, res: Response) => {
+  const startTime = Date.now()
+  const envPath = workerEnvPath()
+  const envVars = readEnvFile(envPath)
+
+  // Detect provider
+  const isBedrock = envVars['CLAUDE_CODE_USE_BEDROCK'] === '1'
+  const isLiteLLM = !!envVars['ANTHROPIC_BASE_URL'] && !isBedrock
+  const provider = isBedrock ? 'bedrock' : (isLiteLLM ? 'litellm' : 'anthropic')
+
+  // Get model
+  const model = envVars['ANTHROPIC_MODEL'] || envVars['CLAUDE_MODEL'] || envVars['MODEL_ID'] || ''
+  if (!model) {
+    return res.json({
+      data: {
+        success: false,
+        provider,
+        model: '',
+        error: 'No model specified',
+        hint: 'Set ANTHROPIC_MODEL or CLAUDE_MODEL env var'
+      }
+    })
+  }
+
+  // Tiny test prompt
+  const testPrompt = 'Say OK'
+  const maxTokens = 10
+
+  try {
+    if (isBedrock) {
+      // === Bedrock Provider ===
+      const region = envVars['AWS_REGION'] || envVars['AWS_DEFAULT_REGION'] || process.env['AWS_REGION'] || process.env['AWS_DEFAULT_REGION']
+      if (!region) {
+        return res.json({
+          data: {
+            success: false,
+            provider,
+            model,
+            authMethod: 'unknown',
+            error: 'AWS_REGION not set',
+            hint: 'Set AWS_REGION or AWS_DEFAULT_REGION env var'
+          }
+        })
+      }
+
+      // Detect auth method
+      let authMethod = 'iam-role'
+      if (envVars['AWS_ACCESS_KEY_ID'] || process.env['AWS_ACCESS_KEY_ID']) {
+        authMethod = 'long-term-keys'
+      } else if (envVars['AWS_PROFILE'] || process.env['AWS_PROFILE']) {
+        authMethod = 'profile'
+      }
+
+      // Create Bedrock client
+      const client = new BedrockRuntimeClient({ region })
+
+      // Build converse command
+      const command = new ConverseCommand({
+        modelId: model,
+        messages: [
+          {
+            role: 'user',
+            content: [{ text: testPrompt }]
+          }
+        ],
+        inferenceConfig: {
+          maxTokens: maxTokens
+        }
+      })
+
+      const response = await client.send(command)
+      const content = response.output?.message?.content?.[0]
+      const responseText = (content && 'text' in content) ? content.text : ''
+
+      return res.json({
+        data: {
+          success: true,
+          provider,
+          model,
+          authMethod,
+          latencyMs: Date.now() - startTime,
+          response: responseText || 'OK'
+        }
+      })
+
+    } else if (isLiteLLM) {
+      // === LiteLLM Provider ===
+      const proxyUrl = envVars['ANTHROPIC_BASE_URL']
+      const apiKey = envVars['ANTHROPIC_API_KEY'] || process.env['ANTHROPIC_API_KEY']
+
+      const response = await fetch(`${proxyUrl}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'anthropic-version': '2023-06-01',
+          ...(apiKey ? { 'x-api-key': apiKey } : {})
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: testPrompt }],
+          max_tokens: maxTokens
+        })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({} as any))
+        const errorMsg = (errorData as any).error?.message || (errorData as any).message || `HTTP ${response.status}`
+        return res.json({
+          data: {
+            success: false,
+            provider,
+            model,
+            authMethod: 'api-key',
+            error: errorMsg,
+            hint: response.status === 401 ? 'Check your LiteLLM proxy API key' :
+                  response.status === 404 ? 'Check your ANTHROPIC_BASE_URL proxy endpoint' :
+                  'Check LiteLLM proxy configuration and model availability'
+          }
+        })
+      }
+
+      const data = await response.json() as any
+      const responseText = data.content?.[0]?.text || ''
+
+      return res.json({
+        data: {
+          success: true,
+          provider,
+          model,
+          authMethod: 'api-key',
+          latencyMs: Date.now() - startTime,
+          response: responseText || 'OK'
+        }
+      })
+
+    } else {
+      // === Anthropic Direct Provider ===
+      const apiKey = envVars['ANTHROPIC_API_KEY'] || process.env['ANTHROPIC_API_KEY']
+      if (!apiKey) {
+        return res.json({
+          data: {
+            success: false,
+            provider,
+            model,
+            authMethod: 'api-key',
+            error: 'ANTHROPIC_API_KEY not set',
+            hint: 'Set your Anthropic API key in worker env vars'
+          }
+        })
+      }
+
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: testPrompt }],
+          max_tokens: maxTokens
+        })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({} as any))
+        const errorMsg = (errorData as any).error?.message || (errorData as any).message || `HTTP ${response.status}`
+        return res.json({
+          data: {
+            success: false,
+            provider,
+            model,
+            authMethod: 'api-key',
+            error: errorMsg,
+            hint: response.status === 401 ? 'Invalid Anthropic API key' :
+                  response.status === 403 ? 'API key lacks permissions for this model' :
+                  response.status === 429 ? 'Rate limit exceeded' :
+                  'Check your Anthropic API key and model availability'
+          }
+        })
+      }
+
+      const data = await response.json() as any
+      const responseText = data.content?.[0]?.text || ''
+
+      return res.json({
+        data: {
+          success: true,
+          provider,
+          model,
+          authMethod: 'api-key',
+          latencyMs: Date.now() - startTime,
+          response: responseText || 'OK'
+        }
+      })
+    }
+
+  } catch (error: any) {
+    // Map common errors to helpful hints
+    let hint = 'Check credentials and network connectivity'
+
+    if (error.name === 'AccessDeniedException' || error.message?.includes('AccessDenied')) {
+      hint = 'IAM role/user needs bedrock:InvokeModel permission for the model'
+    } else if (error.name === 'ResourceNotFoundException') {
+      hint = 'Model ID not found in this region. Check model availability.'
+    } else if (error.name === 'ValidationException') {
+      hint = 'Invalid model ID format. Bedrock IDs look like us.anthropic.claude-*'
+    } else if (error.name === 'ExpiredTokenException' || error.message?.includes('expired')) {
+      hint = 'AWS credentials expired. Refresh SSO or rotate keys.'
+    } else if (error.message?.includes('ENOTFOUND') || error.message?.includes('ECONNREFUSED')) {
+      hint = 'Network error. Check your internet connection and proxy settings.'
+    } else if (error.message?.includes('timeout')) {
+      hint = 'Request timed out. Check network connectivity and region settings.'
+    }
+
+    logger.error({ error: error.message, provider, model }, 'Inference check failed')
+
+    return res.json({
+      data: {
+        success: false,
+        provider,
+        model,
+        authMethod: isBedrock ? 'unknown' : 'api-key',
+        error: error.message || 'Unknown error',
+        hint
+      }
+    })
   }
 })
 
