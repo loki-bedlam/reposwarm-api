@@ -3,7 +3,6 @@ import request from 'supertest'
 import express from 'express'
 import workersRouter from '../../../src/routes/workers.js'
 import { readFileSync, existsSync } from 'fs'
-import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime'
 
 // Mock the AWS SDK
 vi.mock('@aws-sdk/client-bedrock-runtime', () => ({
@@ -41,7 +40,6 @@ describe('Workers Routes', () => {
   })
 
   describe('POST /workers/:id/inference-check', () => {
-    const mockEnvPath = '/home/ubuntu/reposwarm/worker/.env'
 
     it('should successfully check Anthropic provider', async () => {
       // Mock reading env file
