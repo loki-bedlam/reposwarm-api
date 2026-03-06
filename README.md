@@ -64,3 +64,23 @@ Send `Authorization: Bearer <token>` with either:
 - A valid Cognito JWT (from `us-east-1_XgaUUc0TG`)
 - The API bearer token (from `API_BEARER_TOKEN` env var)
 # Auto-trigger test 19:30
+
+## Docker
+
+Pre-built images are published on every push to `main`:
+
+```bash
+docker pull ghcr.io/reposwarm/api:latest
+```
+
+Or build locally:
+
+```bash
+docker build -t reposwarm-api .
+docker run -p 4000:4000 \
+  -e API_BEARER_TOKEN=your-token \
+  -e TEMPORAL_ADDRESS=temporal:7233 \
+  ghcr.io/reposwarm/api:latest
+```
+
+Multi-arch images available: `linux/amd64` and `linux/arm64`.
