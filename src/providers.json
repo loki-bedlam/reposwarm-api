@@ -10,13 +10,13 @@
         ]
       },
       "models": {
-        "sonnet": "claude-sonnet-4-6",
-        "opus": "claude-opus-4-6",
-        "haiku": "claude-haiku-4-5",
+        "sonnet": "claude-sonnet-4-20250514",
+        "opus": "claude-opus-4-20250514",
+        "haiku": "claude-haiku-4-5-20241022",
         "sonnet-3.5": "claude-3-5-sonnet-20241022"
       },
       "defaultModel": "sonnet",
-      "defaultSmallModel": "claude-haiku-4-5",
+      "defaultSmallModel": "claude-haiku-4-5-20241022",
       "pinVars": {
         "opus": "ANTHROPIC_DEFAULT_OPUS_MODEL",
         "sonnet": "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -28,6 +28,7 @@
       "envVars": {
         "always": [
           { "key": "CLAUDE_CODE_USE_BEDROCK", "desc": "Enable Bedrock mode", "required": true, "value": "1" },
+          { "key": "CLAUDE_PROVIDER", "desc": "LLM provider type", "required": true, "value": "bedrock" },
           { "key": "AWS_REGION", "desc": "AWS region for Bedrock", "required": true, "alts": ["AWS_DEFAULT_REGION"] },
           { "key": "ANTHROPIC_MODEL", "desc": "Bedrock model ID", "required": true },
           { "key": "ANTHROPIC_SMALL_FAST_MODEL", "desc": "Small/fast model for triage", "required": false }
@@ -37,8 +38,8 @@
             "label": "EC2 instance profile or ECS task role (recommended)",
             "envVars": []
           },
-          "long-term-keys": {
-            "label": "AWS access key + secret",
+          "access-keys": {
+            "label": "AWS access key + secret key (AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY)",
             "envVars": [
               { "key": "AWS_ACCESS_KEY_ID", "desc": "AWS access key ID", "required": true, "secret": true },
               { "key": "AWS_SECRET_ACCESS_KEY", "desc": "AWS secret access key", "required": true, "secret": true }
@@ -50,24 +51,24 @@
               { "key": "AWS_PROFILE", "desc": "AWS profile name", "required": true }
             ]
           },
+          "api-keys": {
+            "label": "Bedrock API keys (from AWS console → Bedrock → API keys)",
+            "envVars": [
+              { "key": "AWS_BEARER_TOKEN_BEDROCK", "desc": "Bedrock API key", "required": true, "secret": true }
+            ]
+          },
           "sso": {
             "label": "AWS SSO / Identity Center",
             "envVars": [
               { "key": "AWS_PROFILE", "desc": "AWS SSO profile name", "required": true }
-            ]
-          },
-          "api-key": {
-            "label": "Bedrock API key (AWS_BEARER_TOKEN_BEDROCK)",
-            "envVars": [
-              { "key": "AWS_BEARER_TOKEN_BEDROCK", "desc": "Bedrock API key", "required": true, "secret": true }
             ]
           }
         },
         "defaultAuthMethod": "iam-role"
       },
       "models": {
-        "sonnet": "us.anthropic.claude-sonnet-4-6",
-        "opus": "us.anthropic.claude-opus-4-6-v1",
+        "sonnet": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+        "opus": "us.anthropic.claude-opus-4-6-v1:0",
         "haiku": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
         "sonnet-3.5": "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
       },
@@ -89,12 +90,12 @@
         ]
       },
       "models": {
-        "sonnet": "claude-sonnet-4-6",
-        "opus": "claude-opus-4-6",
-        "haiku": "claude-haiku-4-5"
+        "sonnet": "claude-sonnet-4-20250514",
+        "opus": "claude-opus-4-20250514",
+        "haiku": "claude-haiku-4-5-20241022"
       },
       "defaultModel": "sonnet",
-      "defaultSmallModel": "claude-haiku-4-5"
+      "defaultSmallModel": "claude-haiku-4-5-20241022"
     }
   },
   "commonEnvVars": [
