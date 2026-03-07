@@ -20,13 +20,21 @@ router.post('/investigate/single', async (req, res) => {
   }
 
   const workflowId = `investigate-single-${repo_name}-${Date.now()}`
-  await temporal.startWorkflow('InvestigateSingleRepoWorkflow', workflowId, [{
-    repo_name,
-    repo_url: url || '',
-    model: model || 'us.anthropic.claude-sonnet-4-6',
-    chunk_size: chunk_size || 10
-  }])
-  res.status(202).json({ data: { workflowId, status: 'started' } })
+  try {
+    await temporal.startWorkflow('InvestigateSingleRepoWorkflow', workflowId, [{
+      repo_name,
+      repo_url: url || '',
+      model: model || 'us.anthropic.claude-sonnet-4-6',
+      chunk_size: chunk_size || 10
+    }])
+    res.status(202).json({ data: { workflowId, status: 'started' } })
+  } catch (err: any) {
+    if (err?.message?.includes('already exists') || err?.code === 6) {
+      res.status(409).json({ error: 'workflow already running for this repo', workflowId })
+    } else {
+      throw err
+    }
+  }
 })
 
 router.post('/investigate/daily', async (req, res) => {
