@@ -56,7 +56,7 @@ function extractFailureMessage(failure: any): { message: string; source?: string
   let message = failure.message || 'Unknown error'
   let source = failure.source
   let stackTrace = failure.stackTrace
-  let cause = failure.cause
+  const cause = failure.cause
 
   // Extract nested activity failure details
   if (failure.cause?.activityFailureInfo) {

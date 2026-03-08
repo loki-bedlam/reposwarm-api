@@ -2,11 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { formatStartedAgo, isWorkflowStale } from '../../../src/utils/helpers.js'
 
 describe('Stale Workflow Detection Helpers', () => {
-  let originalDateNow: () => number
-
   beforeEach(() => {
-    // Save original Date.now
-    originalDateNow = Date.now
     // Mock Date.now to return a fixed timestamp: 2026-03-08T12:00:00.000Z
     const fixedTime = new Date('2026-03-08T12:00:00.000Z').getTime()
     vi.spyOn(Date, 'now').mockReturnValue(fixedTime)

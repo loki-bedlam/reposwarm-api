@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express'
 import { logger } from '../middleware/logger.js'
-import { infer, readWorkerEnv, detectModel } from '../utils/inference.js'
+import { infer } from '../utils/inference.js'
 import { readFileSync, existsSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
