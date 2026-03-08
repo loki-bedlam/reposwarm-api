@@ -231,6 +231,65 @@ describe('GET /workflows/:id', () => {
     expect(res.status).toBe(200)
     expect(res.body.data.status).toBe('Completed')
   })
+
+  it('extracts activity failure details', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        workflowExecutionInfo: {
+          execution: { workflowId: 'wf-failed', runId: 'r1' },
+          type: { name: 'InvestigateSingleRepoWorkflow' },
+          status: 'WORKFLOW_EXECUTION_STATUS_FAILED',
+          startTime: '2026-01-01T00:00:00Z',
+          closeTime: '2026-01-01T00:05:00Z',
+          failure: {
+            message: 'Activity task failed',
+            cause: {
+              activityFailureInfo: {
+                activityType: { name: 'cloneRepository' },
+                failure: {
+                  message: 'Git clone failed: exit code 128',
+                  stackTrace: 'at cloneRepository (activity.ts:42)'
+                }
+              }
+            }
+          }
+        }
+      })
+    })
+    const res = await request.get('/workflows/wf-failed').set(AUTH)
+    expect(res.status).toBe(200)
+    expect(res.body.data.status).toBe('Failed')
+    expect(res.body.data.failure).toBeDefined()
+    expect(res.body.data.failure.message).toBe('Git clone failed: exit code 128')
+    expect(res.body.data.failure.source).toBe('Activity: cloneRepository')
+  })
+
+  it('extracts application failure details', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        workflowExecutionInfo: {
+          execution: { workflowId: 'wf-app-failed', runId: 'r1' },
+          type: { name: 'TestWorkflow' },
+          status: 'WORKFLOW_EXECUTION_STATUS_FAILED',
+          startTime: '2026-01-01T00:00:00Z',
+          failure: {
+            message: 'Application error',
+            applicationFailureInfo: {
+              type: 'ValidationError',
+              details: { message: 'Invalid repository URL' },
+              nonRetryable: true
+            }
+          }
+        }
+      })
+    })
+    const res = await request.get('/workflows/wf-app-failed').set(AUTH)
+    expect(res.status).toBe(200)
+    expect(res.body.data.failure).toBeDefined()
+    expect(res.body.data.failure.message).toBe('[Non-retryable] Invalid repository URL')
+  })
 })
 
 describe('GET /workflows/status', () => {

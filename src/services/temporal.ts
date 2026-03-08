@@ -50,6 +50,47 @@ export async function listWorkflows(limit = 50): Promise<{ executions: WorkflowE
   return { executions }
 }
 
+function extractFailureMessage(failure: any): { message: string; source?: string; stackTrace?: string; cause?: any } | undefined {
+  if (!failure) return undefined
+
+  let message = failure.message || 'Unknown error'
+  let source = failure.source
+  let stackTrace = failure.stackTrace
+  let cause = failure.cause
+
+  // Extract nested activity failure details
+  if (failure.cause?.activityFailureInfo) {
+    const activityInfo = failure.cause.activityFailureInfo
+    source = `Activity: ${activityInfo.activityType?.name || 'unknown'}`
+
+    // Drill down to the actual error message
+    if (activityInfo.failure) {
+      message = activityInfo.failure.message || message
+      stackTrace = activityInfo.failure.stackTrace || stackTrace
+
+      // Check for nested application failure with more specific details
+      if (activityInfo.failure.cause?.applicationFailureInfo) {
+        const appFailure = activityInfo.failure.cause.applicationFailureInfo
+        const appMessage = appFailure.details?.message || appFailure.type
+        if (appMessage) {
+          message = appFailure.nonRetryable ? `[Non-retryable] ${appMessage}` : appMessage
+        }
+      }
+    }
+  }
+
+  // Extract application failure info (top-level)
+  if (failure.applicationFailureInfo && !failure.cause?.activityFailureInfo) {
+    const appInfo = failure.applicationFailureInfo
+    message = appInfo.details?.message || appInfo.type || message
+    if (appInfo.nonRetryable) {
+      message = `[Non-retryable] ${message}`
+    }
+  }
+
+  return { message, source, stackTrace, cause }
+}
+
 export async function getWorkflow(workflowId: string, runId?: string): Promise<WorkflowExecution | null> {
   try {
     const encodedId = encodeURIComponent(workflowId)
@@ -58,7 +99,8 @@ export async function getWorkflow(workflowId: string, runId?: string): Promise<W
     const info = data.workflowExecutionInfo || data
     const startTime = info.startTime || ''
     const status = normalizeStatus(info.status || 'Running')
-    return {
+
+    const execution: WorkflowExecution = {
       workflowId: info.execution?.workflowId || workflowId,
       runId: info.execution?.runId || runId || '',
       type: info.type?.name || '',
@@ -72,6 +114,13 @@ export async function getWorkflow(workflowId: string, runId?: string): Promise<W
       stale: isWorkflowStale(status, startTime),
       startedAgo: formatStartedAgo(startTime)
     }
+
+    // Extract failure information if workflow failed
+    if (info.failure) {
+      execution.failure = extractFailureMessage(info.failure)
+    }
+
+    return execution
   } catch (e) {
     logger.error({ err: e, workflowId }, 'Failed to get workflow')
     return null

@@ -23,6 +23,12 @@ export interface WorkflowExecution {
   memo?: any
   stale: boolean
   startedAgo: string
+  failure?: {
+    message: string
+    source?: string
+    stackTrace?: string
+    cause?: any
+  }
 }
 
 export interface WorkflowHistory {
