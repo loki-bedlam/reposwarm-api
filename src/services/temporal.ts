@@ -2,6 +2,7 @@ import { Connection, Client } from '@temporalio/client'
 import { config } from '../config.js'
 import { logger } from '../middleware/logger.js'
 import { WorkflowExecution, WorkflowHistory } from '../types/index.js'
+import { formatStartedAgo, isWorkflowStale } from '../utils/helpers.js'
 
 let grpcClient: Client | null = null
 
@@ -31,15 +32,21 @@ async function temporalGet(path: string): Promise<any> {
 
 export async function listWorkflows(limit = 50): Promise<{ executions: WorkflowExecution[] }> {
   const data = await temporalGet(`/workflows?maximumPageSize=${limit}`)
-  const executions = (data.executions || []).map((exec: any) => ({
-    workflowId: exec.execution?.workflowId || '',
-    runId: exec.execution?.runId || '',
-    type: exec.type?.name || '',
-    status: normalizeStatus(exec.status || 'Running'),
-    startTime: exec.startTime || '',
-    closeTime: exec.closeTime,
-    taskQueueName: exec.taskQueue || config.temporalTaskQueue
-  }))
+  const executions = (data.executions || []).map((exec: any) => {
+    const startTime = exec.startTime || ''
+    const status = normalizeStatus(exec.status || 'Running')
+    return {
+      workflowId: exec.execution?.workflowId || '',
+      runId: exec.execution?.runId || '',
+      type: exec.type?.name || '',
+      status,
+      startTime,
+      closeTime: exec.closeTime,
+      taskQueueName: exec.taskQueue || config.temporalTaskQueue,
+      stale: isWorkflowStale(status, startTime),
+      startedAgo: formatStartedAgo(startTime)
+    }
+  })
   return { executions }
 }
 
@@ -48,17 +55,21 @@ export async function getWorkflow(workflowId: string, runId?: string): Promise<W
     const path = runId ? `/workflows/${workflowId}?runId=${runId}` : `/workflows/${workflowId}`
     const data = await temporalGet(path)
     const info = data.workflowExecutionInfo || data
+    const startTime = info.startTime || ''
+    const status = normalizeStatus(info.status || 'Running')
     return {
       workflowId: info.execution?.workflowId || workflowId,
       runId: info.execution?.runId || runId || '',
       type: info.type?.name || '',
-      status: normalizeStatus(info.status || 'Running'),
-      startTime: info.startTime || '',
+      status,
+      startTime,
       closeTime: info.closeTime,
       taskQueueName: info.taskQueue || config.temporalTaskQueue,
       input: data.input,
       result: data.result,
-      memo: data.memo
+      memo: data.memo,
+      stale: isWorkflowStale(status, startTime),
+      startedAgo: formatStartedAgo(startTime)
     }
   } catch (e) {
     logger.error({ err: e, workflowId }, 'Failed to get workflow')
