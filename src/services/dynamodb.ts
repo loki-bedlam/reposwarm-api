@@ -7,13 +7,11 @@ import { logger } from '../middleware/logger.js'
 const clientConfig: any = { region: config.region }
 if (config.dynamoEndpoint) {
   clientConfig.endpoint = config.dynamoEndpoint
-  // DynamoDB Local validates SigV4 credentials by reaching external AWS services.
-  // In Docker, it can't reach them and hangs indefinitely. Use dummy credentials
-  // with a no-op signer to skip SigV4 entirely for local DynamoDB.
-  // DynamoDB Local accepts unsigned requests (returns 400 MissingAuthenticationToken
-  // for some ops, but data ops work via the DocumentClient).
+  // DynamoDB Local needs valid SigV4 signatures but doesn't verify the actual
+  // credentials — any access key/secret will do. Using static dummy credentials
+  // avoids IMDS/STS lookups that hang in Docker environments without network
+  // access to AWS metadata services.
   clientConfig.credentials = { accessKeyId: 'local', secretAccessKey: 'local' }
-  clientConfig.signer = { sign: async (req: any) => req }
 }
 const client = new DynamoDBClient(clientConfig)
 const docClient = DynamoDBDocumentClient.from(client)
