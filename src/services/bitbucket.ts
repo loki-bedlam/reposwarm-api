@@ -6,7 +6,7 @@ export interface DiscoveredRepo {
   source: string
 }
 
-export async function discoverRepos(): Promise<DiscoveredRepo[]> {
+export async function discoverRepos(workspace?: string): Promise<DiscoveredRepo[]> {
   const username = process.env.BITBUCKET_USERNAME
   const appPassword = process.env.BITBUCKET_APP_PASSWORD
   if (!username) {
@@ -22,8 +22,11 @@ export async function discoverRepos(): Promise<DiscoveredRepo[]> {
     'User-Agent': 'RepoSwarm'
   }
 
+  // Use explicit workspace when provided (e.g. BITBUCKET_WORKSPACE env var), otherwise
+  // fall back to the authenticated user's personal workspace (username).
+  const owner = workspace || username
   const repos: DiscoveredRepo[] = []
-  let nextUrl: string | null = `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(username)}?pagelen=100`
+  let nextUrl: string | null = `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(owner)}?pagelen=100`
 
   while (nextUrl) {
     const res = await fetch(nextUrl, { headers })
@@ -39,12 +42,12 @@ export async function discoverRepos(): Promise<DiscoveredRepo[]> {
     for (const r of items) {
       // Find the HTTPS clone URL
       const httpsClone = r.links?.clone?.find(c => c.name === 'https')
-      const cloneUrl = httpsClone?.href || `https://bitbucket.org/${username}/${r.slug}.git`
+      const cloneUrl = httpsClone?.href || `https://bitbucket.org/${owner}/${r.slug}.git`
       repos.push({ name: r.slug, url: cloneUrl, source: 'Bitbucket' })
     }
     nextUrl = data.next || null
   }
 
-  logger.info({ count: repos.length, username }, 'Bitbucket discovery complete')
+  logger.info({ count: repos.length, workspace: owner }, 'Bitbucket discovery complete')
   return repos
 }

@@ -43,7 +43,7 @@ router.delete('/repos/:name', async (req, res) => {
 
 router.post('/repos/discover', async (req, res) => {
   let source = (req.body?.source as string | undefined)?.toLowerCase()
-  const org = req.body?.org as string | undefined
+  let org = req.body?.org as string | undefined
 
   // Auto-detect provider from available credentials when source not specified
   if (!source) {
@@ -54,6 +54,20 @@ router.post('/repos/discover', async (req, res) => {
     else source = 'codecommit'
   }
 
+  // Auto-detect org/group/workspace from env when not provided in the request body.
+  // Users can set these in worker.env and they will be passed into the API container
+  // automatically via the env_file directive in docker-compose.yml.
+  //   GITHUB_ORG=myorg          — limits GitHub discovery to a specific org
+  //   GITLAB_GROUP=mygroup      — limits GitLab discovery to a specific group
+  //   BITBUCKET_WORKSPACE=myws  — limits Bitbucket discovery to a specific workspace
+  //   AZURE_DEVOPS_ORG=myorg    — required for Azure DevOps (always read from env)
+  if (!org && source === 'github') {
+    org = process.env.GITHUB_ORG
+  }
+
+  const group = (req.body?.group as string | undefined) || (source === 'gitlab' ? process.env.GITLAB_GROUP : undefined)
+  const workspace = (req.body?.workspace as string | undefined) || (source === 'bitbucket' ? process.env.BITBUCKET_WORKSPACE : undefined)
+
   let discovered: { name: string; url: string; source: string }[]
 
   try {
@@ -62,14 +76,14 @@ router.post('/repos/discover', async (req, res) => {
         discovered = await github.discoverRepos(org)
         break
       case 'gitlab':
-        discovered = await gitlab.discoverRepos()
+        discovered = await gitlab.discoverRepos(group)
         break
       case 'azure':
       case 'azuredevops':
         discovered = await azure.discoverRepos()
         break
       case 'bitbucket':
-        discovered = await bitbucket.discoverRepos()
+        discovered = await bitbucket.discoverRepos(workspace)
         break
       case 'codecommit':
       default:

@@ -6,7 +6,7 @@ export interface DiscoveredRepo {
   source: string
 }
 
-export async function discoverRepos(): Promise<DiscoveredRepo[]> {
+export async function discoverRepos(group?: string): Promise<DiscoveredRepo[]> {
   const token = process.env.GITLAB_TOKEN
   if (!token) {
     throw new Error('GITLAB_TOKEN not set. Run: reposwarm config git setup')
@@ -22,7 +22,10 @@ export async function discoverRepos(): Promise<DiscoveredRepo[]> {
   let page = 1
 
   while (true) {
-    const url = `${baseUrl}/api/v4/projects?membership=true&per_page=100&page=${page}`
+    // When a group is specified, list only that group's projects; otherwise list all membership projects
+    const url = group
+      ? `${baseUrl}/api/v4/groups/${encodeURIComponent(group)}/projects?include_subgroups=true&per_page=100&page=${page}`
+      : `${baseUrl}/api/v4/projects?membership=true&per_page=100&page=${page}`
     const res = await fetch(url, { headers })
     if (!res.ok) {
       const body = await res.text()
@@ -37,6 +40,6 @@ export async function discoverRepos(): Promise<DiscoveredRepo[]> {
     page++
   }
 
-  logger.info({ count: repos.length }, 'GitLab discovery complete')
+  logger.info({ count: repos.length, group: group || '(all membership)' }, 'GitLab discovery complete')
   return repos
 }
