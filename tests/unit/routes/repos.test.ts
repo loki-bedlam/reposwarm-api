@@ -309,3 +309,120 @@ describe('POST /api/repos/discover — org/group/workspace auto-detection', () =
     })
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Provider auto-detection from env vars (commit 8c12198)
+// When no `source` is provided in the request body, the route auto-detects
+// the provider from available env var credentials.
+// Priority: GITHUB_TOKEN > GITLAB_TOKEN > AZURE_DEVOPS_PAT > BITBUCKET_APP_PASSWORD > codecommit
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('POST /api/repos/discover — provider auto-detection from env vars', () => {
+  beforeEach(() => {
+    vi.clearAllMocks() // reset call counts between tests so not.toHaveBeenCalled() works
+    mockListRepos.mockResolvedValue([])
+    mockPutRepo.mockResolvedValue(undefined)
+    // Clear all provider tokens between tests
+    delete process.env.GITHUB_TOKEN
+    delete process.env.GITLAB_TOKEN
+    delete process.env.AZURE_DEVOPS_PAT
+    delete process.env.BITBUCKET_APP_PASSWORD
+    delete process.env.GITHUB_ORG
+  })
+
+  afterEach(() => {
+    delete process.env.GITHUB_TOKEN
+    delete process.env.GITLAB_TOKEN
+    delete process.env.AZURE_DEVOPS_PAT
+    delete process.env.BITBUCKET_APP_PASSWORD
+  })
+
+  it('auto-detects GitHub when GITHUB_TOKEN is set and no source in body', async () => {
+    process.env.GITHUB_TOKEN = 'ghp_test'
+    mockDiscoverGitHub.mockResolvedValue([
+      { name: 'my-repo', url: 'https://github.com/org/my-repo', source: 'GitHub' }
+    ])
+
+    const res = await request(buildApp())
+      .post('/api/repos/discover')
+      .send({}) // no source
+
+    expect(res.status).toBe(200)
+    expect(mockDiscoverGitHub).toHaveBeenCalled()
+    expect(mockDiscoverGitLab).not.toHaveBeenCalled()
+    expect(res.body.data).toMatchObject({ discovered: 1 })
+  })
+
+  it('auto-detects GitLab when GITLAB_TOKEN is set and no source in body', async () => {
+    process.env.GITLAB_TOKEN = 'glpat-test'
+    mockDiscoverGitLab.mockResolvedValue([
+      { name: 'gl-repo', url: 'https://gitlab.com/org/gl-repo', source: 'GitLab' }
+    ])
+
+    const res = await request(buildApp())
+      .post('/api/repos/discover')
+      .send({}) // no source
+
+    expect(res.status).toBe(200)
+    expect(mockDiscoverGitLab).toHaveBeenCalled()
+    expect(mockDiscoverGitHub).not.toHaveBeenCalled()
+    expect(res.body.data).toMatchObject({ discovered: 1 })
+  })
+
+  it('auto-detects Bitbucket when BITBUCKET_APP_PASSWORD is set and no source in body', async () => {
+    process.env.BITBUCKET_APP_PASSWORD = 'bb-secret'
+    mockDiscoverBitbucket.mockResolvedValue([
+      { name: 'bb-repo', url: 'https://bitbucket.org/ws/bb-repo', source: 'Bitbucket' }
+    ])
+
+    const res = await request(buildApp())
+      .post('/api/repos/discover')
+      .send({}) // no source
+
+    expect(res.status).toBe(200)
+    expect(mockDiscoverBitbucket).toHaveBeenCalled()
+    expect(mockDiscoverGitHub).not.toHaveBeenCalled()
+  })
+
+  it('defaults to codecommit when no provider env vars are set and no source in body', async () => {
+    // No provider env vars set, no source in body → should use codecommit (default)
+    const res = await request(buildApp())
+      .post('/api/repos/discover')
+      .send({}) // no source
+
+    expect(res.status).toBe(200)
+    // codecommit service was called (mocked to return [])
+    expect(mockDiscoverGitHub).not.toHaveBeenCalled()
+    expect(mockDiscoverGitLab).not.toHaveBeenCalled()
+    expect(mockDiscoverBitbucket).not.toHaveBeenCalled()
+  })
+
+  it('uses explicit body source instead of env var auto-detection when source is provided', async () => {
+    // Even with GITLAB_TOKEN set, explicit source=github should win
+    process.env.GITLAB_TOKEN = 'glpat-test'
+    process.env.GITHUB_TOKEN = 'ghp_test'
+    mockDiscoverGitHub.mockResolvedValue([])
+
+    const res = await request(buildApp())
+      .post('/api/repos/discover')
+      .send({ source: 'github' }) // explicit source
+
+    expect(res.status).toBe(200)
+    expect(mockDiscoverGitHub).toHaveBeenCalled()
+    expect(mockDiscoverGitLab).not.toHaveBeenCalled()
+  })
+
+  it('GITHUB_TOKEN takes priority over GITLAB_TOKEN when both are set', async () => {
+    process.env.GITHUB_TOKEN = 'ghp_test'
+    process.env.GITLAB_TOKEN = 'glpat-test'
+    mockDiscoverGitHub.mockResolvedValue([])
+
+    const res = await request(buildApp())
+      .post('/api/repos/discover')
+      .send({}) // no source — priority check
+
+    expect(res.status).toBe(200)
+    expect(mockDiscoverGitHub).toHaveBeenCalled()
+    expect(mockDiscoverGitLab).not.toHaveBeenCalled()
+  })
+})
