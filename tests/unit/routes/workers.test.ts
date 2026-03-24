@@ -290,3 +290,126 @@ describe('Workers Routes', () => {
     })
   })
 })
+// ─────────────────────────────────────────────────────────────────────────────
+// Docker worker health detection (Bug 2 fix)
+// RED: These tests are written BEFORE the Docker-aware health check is added.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Mock child_process so pgrep (execSync) can be controlled
+vi.mock('child_process', async () => {
+  const actual = await vi.importActual('child_process')
+  return {
+    ...(actual as object),
+    execSync: vi.fn().mockImplementation(() => { throw new Error('pgrep: no process found') }),
+    spawn: vi.fn().mockReturnValue({ pid: 0, on: vi.fn(), unref: vi.fn() })
+  }
+})
+
+// Mock temporal service so we can control poller responses
+vi.mock('../../../src/services/temporal.js', () => ({
+  getTaskQueuePollers: vi.fn(),
+  listWorkflows: vi.fn(),
+  getWorkflow: vi.fn(),
+  startWorkflow: vi.fn(),
+  terminateWorkflow: vi.fn(),
+  healthCheck: vi.fn(),
+  resetClient: vi.fn()
+}))
+
+describe('Docker worker health detection', () => {
+  let app: express.Application
+
+  beforeEach(async () => {
+    app = express()
+    app.use(express.json())
+    app.use('/api', workersRouter)
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    delete process.env.DOCKER_COMPOSE
+    vi.restoreAllMocks()
+  })
+
+  it('RED: returns healthy when running in Docker (/.dockerenv exists) and Temporal pollers are active', async () => {
+    // Arrange: Docker env file exists, env vars are configured, pgrep finds nothing
+    vi.mocked(existsSync).mockImplementation((path: any) => {
+      if (String(path) === '/.dockerenv') return true
+      if (String(path).includes('.env')) return true
+      return false
+    })
+    vi.mocked(readFileSync).mockReturnValue(
+      'CLAUDE_CODE_USE_BEDROCK=1\nAWS_REGION=us-east-1\nANTHROPIC_MODEL=us.anthropic.claude-sonnet-4-5'
+    )
+    // pgrep throws (mocked globally above) → pid = 0
+    // Temporal says workers are polling
+    const { getTaskQueuePollers } = await import('../../../src/services/temporal.js')
+    vi.mocked(getTaskQueuePollers).mockResolvedValue([{ identity: 'worker-1', lastAccessTime: new Date().toISOString() }])
+
+    const res = await request(app)
+      .get('/api/workers')
+      .expect(200)
+
+    // Before fix: status = 'stopped' (pid=0, no Docker check)
+    // After fix:  status = 'healthy' (Docker detected, pollers active)
+    expect(res.body.data.workers[0].status).toBe('healthy')
+  })
+
+  it('RED: returns stopped when running in Docker but no Temporal pollers are active', async () => {
+    vi.mocked(existsSync).mockImplementation((path: any) => {
+      if (String(path) === '/.dockerenv') return true
+      if (String(path).includes('.env')) return true
+      return false
+    })
+    vi.mocked(readFileSync).mockReturnValue(
+      'CLAUDE_CODE_USE_BEDROCK=1\nAWS_REGION=us-east-1\nANTHROPIC_MODEL=us.anthropic.claude-sonnet-4-5'
+    )
+    const { getTaskQueuePollers } = await import('../../../src/services/temporal.js')
+    vi.mocked(getTaskQueuePollers).mockResolvedValue([]) // no pollers
+
+    const res = await request(app)
+      .get('/api/workers')
+      .expect(200)
+
+    expect(res.body.data.workers[0].status).toBe('stopped')
+  })
+
+  it('RED: non-Docker environment preserves existing pid-based behaviour (stopped when pid=0)', async () => {
+    // No /.dockerenv, no DOCKER_COMPOSE env var
+    vi.mocked(existsSync).mockImplementation((path: any) => {
+      if (String(path) === '/.dockerenv') return false
+      if (String(path).includes('.env')) return true
+      return false
+    })
+    vi.mocked(readFileSync).mockReturnValue(
+      'CLAUDE_CODE_USE_BEDROCK=1\nAWS_REGION=us-east-1\nANTHROPIC_MODEL=us.anthropic.claude-sonnet-4-5'
+    )
+
+    const res = await request(app)
+      .get('/api/workers')
+      .expect(200)
+
+    // No Docker, pid=0 → must remain stopped
+    expect(res.body.data.workers[0].status).toBe('stopped')
+  })
+
+  it('RED: DOCKER_COMPOSE=1 env var also triggers Docker-aware health check', async () => {
+    process.env.DOCKER_COMPOSE = '1'
+    vi.mocked(existsSync).mockImplementation((path: any) => {
+      // no .dockerenv file, but DOCKER_COMPOSE=1 is set
+      if (String(path).includes('.env')) return true
+      return false
+    })
+    vi.mocked(readFileSync).mockReturnValue(
+      'CLAUDE_CODE_USE_BEDROCK=1\nAWS_REGION=us-east-1\nANTHROPIC_MODEL=us.anthropic.claude-sonnet-4-5'
+    )
+    const { getTaskQueuePollers } = await import('../../../src/services/temporal.js')
+    vi.mocked(getTaskQueuePollers).mockResolvedValue([{ identity: 'worker-1', lastAccessTime: new Date().toISOString() }])
+
+    const res = await request(app)
+      .get('/api/workers')
+      .expect(200)
+
+    expect(res.body.data.workers[0].status).toBe('healthy')
+  })
+})

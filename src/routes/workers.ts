@@ -8,6 +8,7 @@ import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import os from 'os'
 import { infer } from '../utils/inference.js'
+import * as temporalService from '../services/temporal.js'
 
 const router = Router()
 const INSTALL_DIR = process.env.REPOSWARM_INSTALL_DIR || join(os.homedir(), 'reposwarm')
@@ -249,7 +250,7 @@ function readLogTail(service: string, lines: number): string[] {
   return []
 }
 
-function gatherWorkers(): WorkerInfo[] {
+async function gatherWorkers(): Promise<WorkerInfo[]> {
   const envPath = workerEnvPath()
   const envVars = readEnvFile(envPath)
   const hostname = os.hostname()
@@ -267,6 +268,21 @@ function gatherWorkers(): WorkerInfo[] {
   let status: WorkerInfo['status'] = 'stopped'
   if (pid > 0 && isProcessRunning(pid)) {
     status = envErrors.length > 0 ? 'failed' : 'healthy'
+  }
+
+  // Docker-aware health check: when pid=0 in Docker, use Temporal pollers instead
+  if (pid === 0) {
+    const isDocker = existsSync('/.dockerenv') || process.env.DOCKER_COMPOSE === '1'
+    if (isDocker) {
+      try {
+        const pollers = await temporalService.getTaskQueuePollers(config.temporalTaskQueue)
+        if (pollers && pollers.length > 0) {
+          status = envErrors.length > 0 ? 'failed' : 'healthy'
+        }
+      } catch {
+        // Fall back to stopped
+      }
+    }
   }
 
   // Check logs for validation errors
@@ -355,14 +371,14 @@ router.get('/providers/validation', async (req: Request, res: Response) => {
 
 // GET /workers
 router.get('/workers', async (_req: Request, res: Response) => {
-  const workers = gatherWorkers()
+  const workers = await gatherWorkers()
   const healthy = workers.filter(w => w.status === 'healthy').length
   res.json({ data: { workers, total: workers.length, healthy } })
 })
 
 // GET /workers/:id
 router.get('/workers/:id', async (req: Request, res: Response) => {
-  const workers = gatherWorkers()
+  const workers = await gatherWorkers()
   const id = req.params.id as string
   const worker = workers.find(w => w.name === id || w.identity === id)
   if (!worker) return res.status(404).json({ error: `Worker '${id}' not found` })

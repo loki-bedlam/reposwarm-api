@@ -169,4 +169,15 @@ export async function healthCheck(): Promise<boolean> {
   }
 }
 
+export async function getTaskQueuePollers(taskQueue: string): Promise<{ identity: string; lastAccessTime: string }[]> {
+  try {
+    const encoded = encodeURIComponent(taskQueue)
+    const data = await temporalGet(`/task-queues/${encoded}?taskQueueType=WORKFLOW`)
+    return data.pollers || []
+  } catch (e) {
+    logger.error({ err: e, taskQueue }, 'Failed to get task queue pollers')
+    return []
+  }
+}
+
 export function resetClient() { grpcClient = null }

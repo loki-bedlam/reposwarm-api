@@ -17,13 +17,14 @@ process.env.LOG_LEVEL = 'silent'
 process.env.API_BEARER_TOKEN = 'test-token'
 
 // ── hoist mock references so they are available in vi.mock() factories ────────
-const { mockDiscoverGitHub, mockDiscoverGitLab, mockDiscoverBitbucket, mockListRepos, mockPutRepo } =
+const { mockDiscoverGitHub, mockDiscoverGitLab, mockDiscoverBitbucket, mockListRepos, mockPutRepo, mockGetRepo } =
   vi.hoisted(() => ({
     mockDiscoverGitHub:    vi.fn(),
     mockDiscoverGitLab:    vi.fn(),
     mockDiscoverBitbucket: vi.fn(),
     mockListRepos:         vi.fn(),
-    mockPutRepo:           vi.fn()
+    mockPutRepo:           vi.fn(),
+    mockGetRepo:           vi.fn()
   }))
 
 // ── mock discovery services (no real API calls) ───────────────────────────────
@@ -50,7 +51,7 @@ vi.mock('../../../src/services/codecommit.js', () => ({
 vi.mock('../../../src/services/dynamodb.js', () => ({
   listRepos: mockListRepos,
   putRepo:   mockPutRepo,
-  getRepo:   vi.fn(),
+  getRepo:   mockGetRepo,
   updateRepo: vi.fn(),
   deleteRepo: vi.fn()
 }))
@@ -424,5 +425,44 @@ describe('POST /api/repos/discover — provider auto-detection from env vars', (
     expect(res.status).toBe(200)
     expect(mockDiscoverGitHub).toHaveBeenCalled()
     expect(mockDiscoverGitLab).not.toHaveBeenCalled()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PATCH /repos/:name — partial update (Bug 1 fix)
+// RED: These tests are written BEFORE the PATCH route is added.
+//      They should fail with 404 until the fix is applied.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('PATCH /api/repos/:name — partial update', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockPutRepo.mockResolvedValue(undefined)
+  })
+
+  it('RED: PATCH /repos/:name with {enabled: false} should update repo and return merged result', async () => {
+    const existing = { name: 'my-repo', url: 'https://github.com/org/my-repo', source: 'GitHub', enabled: true }
+    mockGetRepo.mockResolvedValue(existing)
+
+    const res = await request(buildApp())
+      .patch('/api/repos/my-repo')
+      .send({ enabled: false })
+
+    // Before the fix this returns 404; after the fix it should return 200
+    expect(res.status).toBe(200)
+    expect(res.body.data).toMatchObject({ name: 'my-repo', url: 'https://github.com/org/my-repo', source: 'GitHub', enabled: false })
+    expect(mockGetRepo).toHaveBeenCalledWith('my-repo')
+    expect(mockPutRepo).toHaveBeenCalledWith({ ...existing, enabled: false })
+  })
+
+  it('RED: PATCH /repos/nonexistent should return 404 with error message', async () => {
+    mockGetRepo.mockResolvedValue(null)
+
+    const res = await request(buildApp())
+      .patch('/api/repos/nonexistent')
+      .send({ enabled: false })
+
+    expect(res.status).toBe(404)
+    expect(res.body.error).toMatch(/nonexistent/)
   })
 })

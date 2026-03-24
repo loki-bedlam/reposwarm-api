@@ -36,6 +36,15 @@ router.put('/repos/:name', async (req, res) => {
   res.json({ data: { ...repo, ...req.body } })
 })
 
+router.patch('/repos/:name', async (req, res) => {
+  const { name } = req.params
+  const existing = await dynamodb.getRepo(name)
+  if (!existing) return res.status(404).json({ error: `Repo '${name}' not found` })
+  const updated = { ...existing, ...req.body }
+  await dynamodb.putRepo(updated)
+  res.json({ data: updated })
+})
+
 router.delete('/repos/:name', async (req, res) => {
   await dynamodb.deleteRepo(req.params.name)
   res.json({ data: { deleted: true } })
