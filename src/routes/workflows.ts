@@ -5,7 +5,8 @@ const router = Router()
 
 router.get('/workflows', async (req, res) => {
   const limit = parseInt(req.query.pageSize as string || req.query.limit as string) || 50
-  const result = await temporal.listWorkflows(limit)
+  const enrichFailed = req.query.enrichFailed === 'true'
+  const result = await temporal.listWorkflows(limit, enrichFailed)
   res.json({ data: result })
 })
 

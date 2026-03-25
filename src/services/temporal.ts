@@ -30,9 +30,9 @@ async function temporalGet(path: string): Promise<any> {
   return res.json()
 }
 
-export async function listWorkflows(limit = 50): Promise<{ executions: WorkflowExecution[] }> {
+export async function listWorkflows(limit = 50, enrichFailed = false): Promise<{ executions: WorkflowExecution[] }> {
   const data = await temporalGet(`/workflows?maximumPageSize=${limit}`)
-  const executions = (data.executions || []).map((exec: any) => {
+  const executions: WorkflowExecution[] = (data.executions || []).map((exec: any) => {
     const startTime = exec.startTime || ''
     const status = normalizeStatus(exec.status || 'Running')
     return {
@@ -47,6 +47,19 @@ export async function listWorkflows(limit = 50): Promise<{ executions: WorkflowE
       startedAgo: formatStartedAgo(startTime)
     }
   })
+
+  if (enrichFailed) {
+    const enrichPromises = executions
+      .filter(e => e.status === 'Failed' || e.status === 'Terminated')
+      .map(async (e) => {
+        try {
+          const detail = await getWorkflow(e.workflowId, e.runId)
+          if (detail?.failure) e.failure = detail.failure
+        } catch { /* ignore enrichment failures */ }
+      })
+    await Promise.all(enrichPromises)
+  }
+
   return { executions }
 }
 
