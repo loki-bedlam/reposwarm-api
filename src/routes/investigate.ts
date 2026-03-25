@@ -6,16 +6,21 @@ const router = Router()
 
 router.post('/investigate/single', async (req, res) => {
   console.log(`[INVESTIGATE] POST /investigate/single called at ${Date.now()} from ${req.ip} body=${JSON.stringify(req.body)}`)
-  const { repo_name, repo_url, model, chunk_size, force } = req.body
-  if (!repo_name) { res.status(400).json({ error: 'repo_name is required' }); return }
+  // Accept both snake_case (CLI) and camelCase (UI) parameter formats
+  const { repo_name, repoName, repo_url, repoUrl, model, chunk_size, chunkSize, force } = req.body
+  const resolvedRepoName = repo_name || repoName
+  const resolvedRepoUrl = repo_url || repoUrl
+  const resolvedChunkSize = chunk_size || chunkSize
 
-  let url = repo_url
+  if (!resolvedRepoName) { res.status(400).json({ error: 'repo_name is required' }); return }
+
+  let url = resolvedRepoUrl
   if (!url) {
     // If repo_name looks like a URL, use it directly
-    if (repo_name.startsWith('http://') || repo_name.startsWith('https://') || repo_name.startsWith('git@')) {
-      url = repo_name
+    if (resolvedRepoName.startsWith('http://') || resolvedRepoName.startsWith('https://') || resolvedRepoName.startsWith('git@')) {
+      url = resolvedRepoName
     } else {
-      const repo = await dynamodb.getRepo(repo_name)
+      const repo = await dynamodb.getRepo(resolvedRepoName)
       if (repo) url = repo.url
     }
   }
@@ -23,13 +28,13 @@ router.post('/investigate/single', async (req, res) => {
   // Use a deterministic workflow ID to prevent duplicates
   // Temporal will reject if a workflow with this ID is already running
   const ts = Math.floor(Date.now() / 1000) // 1-second granularity prevents rapid double-submits
-  const workflowId = `investigate-single-${repo_name}-${ts}`
+  const workflowId = `investigate-single-${resolvedRepoName}-${ts}`
   try {
     await temporal.startWorkflow('InvestigateSingleRepoWorkflow', workflowId, [{
-      repo_name,
+      repo_name: resolvedRepoName,
       repo_url: url || '',
       model: model || 'us.anthropic.claude-sonnet-4-6',
-      chunk_size: chunk_size || 10,
+      chunk_size: resolvedChunkSize || 10,
       force: Boolean(force),
     }])
     res.status(202).json({ data: { workflowId, status: 'started' } })
@@ -43,13 +48,18 @@ router.post('/investigate/single', async (req, res) => {
 })
 
 router.post('/investigate/daily', async (req, res) => {
+  // Accept both snake_case (CLI) and camelCase (UI) parameter formats
   const {
-    sleep_hours = 24,
-    chunk_size = 10,
+    sleep_hours, sleepHours,
+    chunk_size, chunkSize,
     model,
-    max_tokens,
+    max_tokens, maxTokens,
     force = false,
   } = req.body || {}
+
+  const resolvedSleepHours = sleep_hours ?? sleepHours ?? 24
+  const resolvedChunkSize = chunk_size ?? chunkSize ?? 10
+  const resolvedMaxTokens = max_tokens ?? maxTokens
 
   const workflowId = `investigate-daily-${Date.now()}`
 
@@ -57,20 +67,20 @@ router.post('/investigate/daily', async (req, res) => {
   //   force, claude_model, max_tokens, sleep_hours, chunk_size, iteration_count
   const workflowInput: Record<string, unknown> = {
     force: Boolean(force),
-    sleep_hours: Number(sleep_hours),
-    chunk_size: Number(chunk_size),
+    sleep_hours: Number(resolvedSleepHours),
+    chunk_size: Number(resolvedChunkSize),
     iteration_count: 0,
   }
   if (model) workflowInput.claude_model = model
-  if (max_tokens) workflowInput.max_tokens = Number(max_tokens)
+  if (resolvedMaxTokens) workflowInput.max_tokens = Number(resolvedMaxTokens)
 
   await temporal.startWorkflow('InvestigateReposWorkflow', workflowId, [workflowInput])
   res.status(202).json({
     data: {
       workflowId,
       status: 'started',
-      sleepHours: sleep_hours,
-      chunkSize: chunk_size,
+      sleepHours: resolvedSleepHours,
+      chunkSize: resolvedChunkSize,
       force,
     }
   })
