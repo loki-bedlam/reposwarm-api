@@ -133,17 +133,32 @@ export async function getWorkflow(workflowId: string, runId?: string): Promise<W
       execution.failure = extractFailureMessage(info.failure)
     }
 
-    // If failed but no failure info from the info endpoint, check history
+    // If failed but no failure info from HTTP API, use gRPC to get the failure
     if ((status === 'Failed' || status === 'Terminated') && !execution.failure) {
       try {
-        const history = await getWorkflowHistory(workflowId, execution.runId)
-        for (const event of history.events) {
-          if (event.details?.failure) {
-            execution.failure = extractFailureMessage(event.details.failure)
-            break
+        const client = await getGrpcClient()
+        const handle = client.workflow.getHandle(workflowId, execution.runId || undefined)
+        await handle.result()
+      } catch (err: any) {
+        // The error from result() contains the actual failure details
+        if (err?.cause || err?.message) {
+          const failure: any = {
+            message: err.message || 'Unknown error',
+            source: err.cause?.source,
+            stackTrace: err.cause?.stackTrace,
+          }
+          if (err.cause?.cause) {
+            failure.cause = {
+              message: err.cause.cause.message,
+              activityFailureInfo: err.cause.cause.activityFailureInfo,
+              applicationFailureInfo: err.cause.cause.applicationFailureInfo,
+            }
+          }
+          execution.failure = extractFailureMessage(failure) || {
+            message: err.message || 'Unknown error',
           }
         }
-      } catch { /* best effort */ }
+      }
     }
 
     return execution
