@@ -133,6 +133,19 @@ export async function getWorkflow(workflowId: string, runId?: string): Promise<W
       execution.failure = extractFailureMessage(info.failure)
     }
 
+    // If failed but no failure info from the info endpoint, check history
+    if ((status === 'Failed' || status === 'Terminated') && !execution.failure) {
+      try {
+        const history = await getWorkflowHistory(workflowId, execution.runId)
+        for (const event of history.events) {
+          if (event.details?.failure) {
+            execution.failure = extractFailureMessage(event.details.failure)
+            break
+          }
+        }
+      } catch { /* best effort */ }
+    }
+
     return execution
   } catch (e) {
     logger.error({ err: e, workflowId }, 'Failed to get workflow')
@@ -145,12 +158,26 @@ export async function getWorkflowHistory(workflowId: string, runId?: string): Pr
   const params = runId ? `?runId=${runId}` : ''
   const data = await temporalGet(`/workflows/${encodedId}/history${params}`)
   return {
-    events: (data.history?.events || []).map((e: any) => ({
-      eventId: e.eventId || '',
-      eventTime: e.eventTime || '',
-      eventType: e.eventType || '',
-      details: e.attributes || e.details
-    }))
+    events: (data.history?.events || []).map((e: any) => {
+      // Temporal HTTP API returns attributes under type-specific keys like
+      // workflowExecutionFailedEventAttributes, activityTaskFailedEventAttributes, etc.
+      // Find the first key ending in "EventAttributes" as the details.
+      let details = e.attributes || e.details
+      if (!details || Object.keys(details).length === 0) {
+        for (const key of Object.keys(e)) {
+          if (key.endsWith('EventAttributes') || key.endsWith('eventAttributes')) {
+            details = e[key]
+            break
+          }
+        }
+      }
+      return {
+        eventId: e.eventId || '',
+        eventTime: e.eventTime || '',
+        eventType: e.eventType || '',
+        details: details || undefined
+      }
+    })
   }
 }
 
