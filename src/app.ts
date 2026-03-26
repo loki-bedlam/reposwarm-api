@@ -15,6 +15,7 @@ import tokensRouter from './routes/tokens.js'
 import workersRouter from './routes/workers.js'
 import servicesRouter from './routes/services.js'
 import askRouter from './routes/ask.js'
+import infrastructureRouter from './routes/infrastructure.js'
 
 export function createApp() {
   const app = express()
@@ -41,6 +42,7 @@ export function createApp() {
   v1.use(workersRouter)
   v1.use(servicesRouter)
   v1.use(askRouter)
+  v1.use(infrastructureRouter)
   app.use('/v1', v1)
 
   // Also mount at root for backward compat
@@ -56,6 +58,7 @@ export function createApp() {
   root.use(workersRouter)
   root.use(servicesRouter)
   root.use(askRouter)
+  root.use(infrastructureRouter)
   app.use(root)
   app.use(errorHandler)
 

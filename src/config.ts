@@ -11,6 +11,7 @@ export const config = {
   cognitoRegion: process.env.COGNITO_REGION || 'us-east-1',
   cognitoClientId: process.env.COGNITO_CLIENT_ID || '',
   apiBearerToken: process.env.API_BEARER_TOKEN || '',
+  ecsClusterName: process.env.ECS_CLUSTER_NAME || '',
   logLevel: process.env.LOG_LEVEL || 'info',
   version: process.env.npm_package_version || '1.0.0'
 }
